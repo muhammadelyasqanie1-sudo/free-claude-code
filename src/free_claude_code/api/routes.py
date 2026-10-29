@@ -6,6 +6,7 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Body, Depends, Header, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse
 from loguru import logger
 from pydantic import ValidationError
 
@@ -338,17 +339,52 @@ async def probe_count_tokens(_auth=Depends(require_anthropic_proxy_auth)):
     return _probe_response("POST, HEAD, OPTIONS")
 
 
-@router.get("/")
-async def root(
-    settings: Settings = Depends(get_settings),
-    _auth=Depends(require_proxy_auth),
-):
+@router.get("/", response_class=HTMLResponse)
+async def root():
+    """Public browser chat page."""
+    return HTMLResponse(content="""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#10131b">
+<title>Free Claude Code — Chat</title>
+<style>
+:root{color-scheme:dark;--bg:#10131b;--panel:#171b26;--line:#2a3040;--muted:#9ba5b8;--text:#f3f5fb;--accent:#b6f09c}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#20283a 0,#10131b 52%);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh;display:flex;flex-direction:column}
+header{height:72px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 max(18px,calc((100vw - 920px)/2));gap:12px}
+.brand{display:flex;align-items:center;gap:12px;font-weight:700;letter-spacing:.2px}.logo{width:38px;height:38px;border-radius:12px;background:var(--accent);color:#142018;display:grid;place-items:center;font-weight:900;font-size:19px}.status{color:var(--muted);font-size:13px}
+main{width:min(920px,100%);margin:0 auto;flex:1;display:flex;flex-direction:column;padding:32px 18px 20px;min-height:0}
+.intro{text-align:center;padding:24px 0 26px}.intro h1{font-size:clamp(26px,5vw,38px);line-height:1.2;margin:0 0 12px;letter-spacing:-1px}.intro p{margin:0;color:var(--muted)}
+#chat{display:flex;flex-direction:column;gap:16px;flex:1;min-height:220px;padding:8px 0 22px}
+.msg{max-width:88%;padding:14px 17px;border:1px solid var(--line);border-radius:18px;white-space:pre-wrap;overflow-wrap:anywhere}.user{align-self:flex-end;background:#283342;border-color:#3b485e;border-bottom-right-radius:5px}.assistant{align-self:flex-start;background:var(--panel);border-bottom-left-radius:5px}.label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:5px}
+.composer{position:sticky;bottom:0;background:#151923;border:1px solid #343b4d;border-radius:20px;padding:10px;box-shadow:0 12px 40px #0005}.compose-row{display:flex;align-items:flex-end;gap:10px}textarea{flex:1;resize:vertical;min-height:52px;max-height:180px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;padding:12px;min-width:0}button{border:0;border-radius:13px;padding:12px 18px;background:var(--accent);color:#142018;font-weight:750;font-size:15px;cursor:pointer;min-height:48px}button:disabled{opacity:.55;cursor:wait}.hint{text-align:center;color:var(--muted);font-size:12px;padding:10px 0 0}.error{color:#ffb4b4}.welcome{color:var(--muted);text-align:center;padding:30px 8px}
+@media(max-width:560px){header{height:62px}main{padding-top:14px}.intro{padding:22px 0}.msg{max-width:96%}.status{display:none}button{padding:11px 14px}}
+</style></head>
+<body>
+<header><div class="brand"><div class="logo">F</div><span>Free Claude Code</span></div><div class="status">Public chat · No account required</div></header>
+<main><section class="intro"><h1>What can I help with?</h1><p>Ask a question and start a conversation.</p></section>
+<section id="chat" aria-live="polite"><div class="welcome" id="welcome">Your conversation will appear here.</div></section>
+<form class="composer" id="form"><div class="compose-row"><textarea id="prompt" rows="1" maxlength="12000" placeholder="Message Free Claude Code…" aria-label="Message" required></textarea><button id="send" type="submit">Send ↗</button></div><div class="hint">Enter to send · Shift + Enter for a new line</div></form></main>
+<script>
+(function(){
+const chat=document.getElementById('chat'),form=document.getElementById('form'),input=document.getElementById('prompt'),send=document.getElementById('send');
+let model='nvidia_nim/nvidia/nemotron-3-ultra-550b-a55b',busy=false;
+fetch('/status').then(r=>r.ok?r.json():null).then(d=>{if(d&&d.model)model=d.model}).catch(()=>{});
+function add(role,text,extra){const welcome=document.getElementById('welcome');if(welcome)welcome.remove();const el=document.createElement('div');el.className='msg '+role;const label=document.createElement('div');label.className='label';label.textContent=role==='user'?'You':'Assistant';el.appendChild(label);const body=document.createElement('div');body.textContent=text;el.appendChild(body);if(extra)el.classList.add('error');chat.appendChild(el);el.scrollIntoView({behavior:'smooth',block:'end'});return body}
+async function submit(){const text=input.value.trim();if(!text||busy)return;add('user',text);input.value='';busy=true;send.disabled=true;send.textContent='…';const out=add('assistant','Thinking…');try{const res=await fetch('/v1/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:model,max_tokens:1024,messages:[{role:'user',content:text}]})});const data=await res.json().catch(()=>({}));if(!res.ok){const detail=data.detail||data.error?.message||data.message||('Request failed ('+res.status+')');out.textContent='Unable to get a response: '+(typeof detail==='string'?detail:JSON.stringify(detail));out.parentElement.classList.add('error')}else{const parts=Array.isArray(data.content)?data.content.filter(x=>x.type==='text').map(x=>x.text):[];out.textContent=parts.join('\n')||data.message||'The server returned an empty response.'}}catch(e){out.textContent='Could not connect to the chat server. Please try again later.';out.parentElement.classList.add('error')}finally{busy=false;send.disabled=false;send.textContent='Send ↗';input.focus()}}
+form.addEventListener('submit',e=>{e.preventDefault();submit()});input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}})
+})();
+</script></body></html>""", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/status")
+async def public_status(settings: Settings = Depends(get_settings)):
+    """Public, non-secret runtime status used by the chat page."""
     return {
         "status": "ok",
         "provider": parse_provider_type(settings.model),
         "model": settings.model,
     }
-
 
 @router.api_route("/", methods=["HEAD", "OPTIONS"])
 async def probe_root():
